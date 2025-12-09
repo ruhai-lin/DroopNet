@@ -1,16 +1,16 @@
 /**
  * @file model.h
- * @brief TinyGRU INT8 模型定义 - ASIC Golden Model
+ * @brief TinyGRU INT8 model definition - ASIC Golden Model
  * 
- * 模型结构:
- * - 单层 GRU, hidden_size = 36
- * - 输入: 9 通道, 50 时间步
- * - 输出: 1 (二分类 logit)
+ * Model structure:
+ * - Single-layer GRU, hidden_size = 36
+ * - Input: 9 channels, 50 timesteps
+ * - Output: 1 (binary classification logit)
  * 
- * 内存占用估算 (INT8):
- * - GRU 权重: 3 * 36 * (9 + 36 + 2) = 5076 bytes
- * - Head 权重: 36 + 1 = 37 bytes
- * - 总权重: ~5.1 KB
+ * Memory estimate (INT8):
+ * - GRU weights: 3 * 36 * (9 + 36 + 2) = 5076 bytes
+ * - Head weights: 36 + 1 = 37 bytes
+ * - Total weights: ~5.1 KB
  */
 
 #ifndef MODEL_H
@@ -20,7 +20,7 @@
 #include <stddef.h>
 
 /* ========================================
- *          模型架构常量
+ *          Model architecture constants
  * ======================================== */
 
 #define INPUT_SIZE      9
@@ -28,15 +28,15 @@
 #define NUM_LAYERS      1
 #define WINDOW_SIZE     50
 
-// GRU 门数 (reset, update, new)
+// Number of GRU gates (reset, update, new)
 #define NUM_GATES       3
 
 /* ========================================
- *          量化参数结构
+ *          Quantization parameter structs
  * ======================================== */
 
 /**
- * @brief GRU 层量化参数和权重
+ * @brief GRU layer quantization parameters and weights
  */
 typedef struct {
     // weight_ih: (3*H, I)
@@ -53,7 +53,7 @@ typedef struct {
 } GRULayerParams;
 
 /**
- * @brief Linear 层量化参数和权重
+ * @brief Linear layer quantization parameters and weights
  */
 typedef struct {
     float w_scale;
@@ -66,15 +66,15 @@ typedef struct {
 } LinearParams;
 
 /**
- * @brief 完整 GRU 模型
+ * @brief Complete GRU model
  */
 typedef struct {
-    // 模型配置
+    // Model configuration
     int input_size;
     int hidden_size;
     int num_layers;
     
-    // 激活值量化参数
+    // Activation quantization parameters
     float input_scale;
     int32_t input_zp;
     float gru_out_scale;
@@ -82,39 +82,39 @@ typedef struct {
     float head_out_scale;
     int32_t head_out_zp;
     
-    // 层参数
+    // Layer parameters
     GRULayerParams gru_layers[NUM_LAYERS];
     LinearParams head;
 } TinyGRUModel;
 
 /* ========================================
- *          模型加载/释放函数
+ *          Model load/free helpers
  * ======================================== */
 
 /**
- * @brief 从二进制文件加载模型权重
- * @param model 模型结构指针
- * @param filepath 权重文件路径
- * @return 0 成功, -1 失败
+ * @brief Load model weights from binary file
+ * @param model model struct pointer
+ * @param filepath weight file path
+ * @return 0 success, -1 failure
  */
 int model_load(TinyGRUModel *model, const char *filepath);
 
 /**
- * @brief 释放模型内存
- * @param model 模型结构指针
+ * @brief Free model memory
+ * @param model model struct pointer
  */
 void model_free(TinyGRUModel *model);
 
 /**
- * @brief 打印模型信息
- * @param model 模型结构指针
+ * @brief Print model info
+ * @param model model struct pointer
  */
 void model_print_info(const TinyGRUModel *model);
 
 /**
- * @brief 计算模型权重大小 (字节)
- * @param model 模型结构指针
- * @return 权重字节数
+ * @brief Calculate model weight size (bytes)
+ * @param model model struct pointer
+ * @return weight bytes
  */
 size_t model_weight_bytes(const TinyGRUModel *model);
 

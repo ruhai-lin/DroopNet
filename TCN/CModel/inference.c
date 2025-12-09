@@ -1,6 +1,6 @@
 /**
  * @file inference.c
- * @brief TinyTCN INT8 推理实现 - ASIC Golden Model (PTQ 版本)
+ * @brief TinyTCN INT8 inference implementation - ASIC Golden Model (PTQ version)
  */
 
 #include "inference.h"
@@ -9,7 +9,7 @@
 #include <math.h>
 
 /* ========================================
- *          缓冲区管理
+ *          Buffer management
  * ======================================== */
 
 int inference_buffer_init(InferenceBuffer *buf) {
@@ -45,7 +45,7 @@ static void swap_buffers(InferenceBuffer *buf) {
 }
 
 /* ========================================
- *          量化基础运算
+ *          Quantization basics
  * ======================================== */
 
 int8_t quantize_int8(float val, float scale, int32_t zp) {
@@ -64,10 +64,10 @@ float dequantize_int8(int8_t val, float scale, int32_t zp) {
  * ======================================== */
 
 /**
- * @brief INT8 Conv1D 核心实现
+ * @brief INT8 Conv1D core implementation
  * 
- * 输入布局: [channels, seq_len] (CHW format)
- * 权重布局: [out_ch, in_ch, kernel_size]
+ * Input layout: [channels, seq_len] (CHW format)
+ * Weight layout: [out_ch, in_ch, kernel_size]
  */
 int int8_conv1d(int8_t *output,
                 const int8_t *input,
@@ -80,34 +80,34 @@ int int8_conv1d(int8_t *output,
     int in_ch = params->in_channels;
     int k = params->kernel_size;
     
-    // Causal padding (左侧填充)
+    // Causal padding (left-side padding)
     int padding = (k - 1) * dilation;
-    (void)padding;  // 用于计算，下面会用到
+    (void)padding;  // used for calculations below
     
-    // 输出长度 (因为有 chomp, 保持与输入相同)
+    // Output length (chomp keeps it same as input)
     int out_len = in_len;
     
     int32_t x_zp = params->input_zp;
     
-    // 遍历输出通道
+    // Loop over output channels
     for (int oc = 0; oc < out_ch; oc++) {
         int32_t w_zp = params->weight_zps[oc];
         float w_scale = params->weight_scales[oc];
         float scale_factor = params->input_scale * w_scale;
         
-        // 遍历输出时间步
+        // Loop over timesteps
         for (int t = 0; t < out_len; t++) {
             int32_t acc = 0;
             
-            // 卷积核遍历
+            // Kernel traversal
             for (int ic = 0; ic < in_ch; ic++) {
                 for (int ki = 0; ki < k; ki++) {
-                    // 计算输入索引 (考虑 padding 和 dilation)
-                    int t_in = t + ki * dilation;  // 相对于 padded input
+                    // Compute input index (consider padding and dilation)
+                    int t_in = t + ki * dilation;  // relative to padded input
                     
                     int32_t x_val;
                     if (t_in < padding) {
-                        // 在 padding 区域，使用 zero point
+                        // In padding region, use zero point
                         x_val = x_zp;
                     } else {
                         int actual_idx = t_in - padding;
@@ -118,27 +118,27 @@ int int8_conv1d(int8_t *output,
                         }
                     }
                     
-                    // 获取权重
+                    // Fetch weight
                     int w_idx = oc * (in_ch * k) + ic * k + ki;
                     int32_t w_val = (int32_t)params->weights_int8[w_idx];
                     
-                    // 累加: (x - x_zp) * (w - w_zp)
+                    // Accumulate: (x - x_zp) * (w - w_zp)
                     acc += (x_val - x_zp) * (w_val - w_zp);
                 }
             }
             
-            // 加上量化后的 bias
+            // Add quantized bias
             acc += params->bias_int32[oc];
             
-            // 反量化到 float
+            // Dequantize to float
             float y_float = (float)acc * scale_factor;
             
-            // ReLU (如果需要)
+            // ReLU (if needed)
             if (apply_relu && y_float < 0) {
                 y_float = 0.0f;
             }
             
-            // 重新量化到输出 scale
+            // Requantize to output scale
             output[oc * out_len + t] = quantize_int8(y_float, 
                                                       params->output_scale, 
                                                       params->output_zp);
@@ -149,7 +149,7 @@ int int8_conv1d(int8_t *output,
 }
 
 /* ========================================
- *          INT8 残差相加
+ *          INT8 residual add
  * ======================================== */
 
 void int8_add_relu(int8_t *output,
@@ -163,15 +163,15 @@ void int8_add_relu(int8_t *output,
         for (int t = 0; t < seq_len; t++) {
             int idx = c * seq_len + t;
             
-            // 反量化
+            // Dequantize
             float a_float = dequantize_int8(a[idx], a_scale, a_zp);
             float b_float = dequantize_int8(b[idx], b_scale, b_zp);
             
-            // 相加 + ReLU
+            // Add + ReLU
             float sum = a_float + b_float;
             if (sum < 0) sum = 0.0f;
             
-            // 重新量化
+            // Requantize
             output[idx] = quantize_int8(sum, out_scale, out_zp);
         }
     }
@@ -185,7 +185,7 @@ float int8_linear(const int8_t *input, const LayerParams *params) {
     int in_features = params->in_channels;  // Linear: in_channels = in_features
     int32_t x_zp = params->input_zp;
     
-    // 只有一个输出 (out_channels = 1)
+    // Only one output (out_channels = 1)
     int32_t w_zp = params->weight_zps[0];
     float w_scale = params->weight_scales[0];
     
@@ -198,23 +198,23 @@ float int8_linear(const int8_t *input, const LayerParams *params) {
         acc += (x_val - x_zp) * (w_val - w_zp);
     }
     
-    // 加 bias
+    // Add bias
     acc += params->bias_int32[0];
     
-    // 反量化到 float (不需要重新量化，直接输出)
+    // Dequantize to float (no requantization; direct output)
     float scale_factor = params->input_scale * w_scale;
     return (float)acc * scale_factor;
 }
 
 /* ========================================
- *          TCN Block 前向传播
+ *          TCN block forward
  * ======================================== */
 
 static void forward_block(const BlockParams *block,
                           int8_t *output,
                           const int8_t *input,
-                          int8_t *temp_conv1,   // 用于 conv1 输出
-                          int8_t *temp_conv2,   // 用于 conv2 输出
+                          int8_t *temp_conv1,   // for conv1 output
+                          int8_t *temp_conv2,   // for conv2 output
                           int out_ch,
                           int seq_len,
                           float *current_scale,
@@ -228,25 +228,25 @@ static void forward_block(const BlockParams *block,
     int8_conv1d(temp_conv2, temp_conv1, &block->conv2, seq_len,
                 block->dilation, 1);  // apply_relu = 1
     
-    // 残差分支
+    // Residual branch
     const int8_t *residual;
     float res_scale;
     int32_t res_zp;
     
     if (block->has_downsample) {
-        // Downsample (1x1 conv, 无 ReLU) - 使用 temp_conv1 作为输出 (conv1 已经用完)
+        // Downsample (1x1 conv, no ReLU) - reuse temp_conv1 for output (conv1 already used)
         int8_conv1d(temp_conv1, input, &block->downsample, seq_len,
                     1, 0);  // dilation=1, no relu
         residual = temp_conv1;
         res_scale = block->downsample.output_scale;
         res_zp = block->downsample.output_zp;
     } else {
-        residual = input;  // 直接使用输入
+        residual = input;  // use input directly
         res_scale = *current_scale;
         res_zp = *current_zp;
     }
     
-    // 残差相加 + ReLU
+    // Residual add + ReLU
     int8_add_relu(output,
                   residual, temp_conv2,
                   out_ch, seq_len,
@@ -254,13 +254,13 @@ static void forward_block(const BlockParams *block,
                   block->conv2.output_scale, block->conv2.output_zp,
                   block->block_out_scale, block->block_out_zp);
     
-    // 更新当前量化参数
+    // Update current quantization params
     *current_scale = block->block_out_scale;
     *current_zp = block->block_out_zp;
 }
 
 /* ========================================
- *          完整推理
+ *          Full inference
  * ======================================== */
 
 float inference_forward(const TinyTCNModel *model, 
@@ -269,11 +269,11 @@ float inference_forward(const TinyTCNModel *model,
     
     int seq_len = WINDOW_SIZE;
     
-    // 1. 输入量化: uint8 [0-255] -> float [0-1] -> int8
-    // 输入布局转换: [T, C] -> [C, T]
+    // 1. Input quantization: uint8 [0-255] -> float [0-1] -> int8
+    // Layout conversion: [T, C] -> [C, T]
     for (int c = 0; c < NUM_INPUTS; c++) {
         for (int t = 0; t < seq_len; t++) {
-            // 原始输入是 uint8 ADC code, 归一化到 [0, 1]
+            // Raw input is uint8 ADC code, normalize to [0, 1]
             float val = (float)input[t * NUM_INPUTS + c] / 255.0f;
             buf->current[c * seq_len + t] = quantize_int8(val, 
                                                           model->input_scale, 
@@ -284,10 +284,10 @@ float inference_forward(const TinyTCNModel *model,
     float current_scale = model->input_scale;
     int32_t current_zp = model->input_zp;
     
-    // 输出通道数配置
+    // Output channel configuration
     int out_channels[NUM_BLOCKS] = {CH_BLOCK0, CH_BLOCK1, CH_BLOCK2, CH_BLOCK3};
     
-    // 2. 前向传播各 Block
+    // 2. Forward pass through each block
     for (int i = 0; i < NUM_BLOCKS; i++) {
         forward_block(&model->blocks[i],
                       buf->next,        // output
@@ -300,7 +300,7 @@ float inference_forward(const TinyTCNModel *model,
         swap_buffers(buf);
     }
     
-    // 3. 取最后一个时间步
+    // 3. Take the last timestep
     int8_t last_timestep[CH_BLOCK3];
     for (int c = 0; c < CH_BLOCK3; c++) {
         last_timestep[c] = buf->current[c * seq_len + (seq_len - 1)];

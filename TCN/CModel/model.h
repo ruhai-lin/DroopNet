@@ -1,12 +1,12 @@
 /**
  * @file model.h
- * @brief TinyTCN INT8 模型定义 - ASIC Golden Model (PTQ 版本)
+ * @brief TinyTCN INT8 model definition - ASIC Golden Model (PTQ version)
  * 
- * 模型结构:
- * - 4 个 TCN blocks, 通道数 [11, 10, 5, 4]
+ * Model structure:
+ * - 4 TCN blocks, channels [11, 10, 5, 4]
  * - kernel_size = 5, dilations = [1, 2, 4, 8]
- * - 输入: 9 通道, 50 时间步
- * - 输出: 1 (二分类 logit)
+ * - Input: 9 channels, 50 timesteps
+ * - Output: 1 (binary classification logit)
  */
 
 #ifndef MODEL_H
@@ -16,7 +16,7 @@
 #include <stddef.h>
 
 /* ========================================
- *          模型架构常量
+ *          Model architecture constants
  * ======================================== */
 
 #define NUM_INPUTS      9
@@ -24,7 +24,7 @@
 #define KERNEL_SIZE     5
 #define NUM_BLOCKS      4
 
-// 各层通道数
+// Channels per block
 #define CH_BLOCK0       11
 #define CH_BLOCK1       10
 #define CH_BLOCK2       5
@@ -37,15 +37,15 @@
 #define DILATION_2      4
 #define DILATION_3      8
 
-// 最大通道数 (用于静态分配)
+// Max channels (for static allocation)
 #define MAX_CHANNELS    11
 
 /* ========================================
- *          量化层参数结构
+ *          Quantized layer parameter structs
  * ======================================== */
 
 /**
- * @brief 单层量化参数
+ * @brief Quantization parameters for a single layer
  */
 typedef struct {
     float input_scale;
@@ -64,12 +64,12 @@ typedef struct {
 } LayerParams;
 
 /**
- * @brief TCN Block 参数
+ * @brief TCN block parameters
  */
 typedef struct {
     LayerParams conv1;
     LayerParams conv2;
-    LayerParams downsample;    // 可能为空 (in_ch == out_ch 时)
+    LayerParams downsample;    // may be empty (when in_ch == out_ch)
     int has_downsample;
     
     float block_out_scale;
@@ -79,45 +79,45 @@ typedef struct {
 } BlockParams;
 
 /**
- * @brief 完整模型参数
+ * @brief Full model parameters
  */
 typedef struct {
     BlockParams blocks[NUM_BLOCKS];
     LayerParams head;           // Linear layer
     
-    // 初始量化参数 (从第一层获取)
+    // Initial quantization params (from first layer)
     float input_scale;
     int32_t input_zp;
 } TinyTCNModel;
 
 /* ========================================
- *          模型加载/释放函数
+ *          Model load/free helpers
  * ======================================== */
 
 /**
- * @brief 从二进制文件加载模型权重
- * @param model 模型结构指针
- * @param filepath 权重文件路径
- * @return 0 成功, -1 失败
+ * @brief Load model weights from binary file
+ * @param model model struct pointer
+ * @param filepath weight file path
+ * @return 0 success, -1 failure
  */
 int model_load(TinyTCNModel *model, const char *filepath);
 
 /**
- * @brief 释放模型内存
- * @param model 模型结构指针
+ * @brief Free model memory
+ * @param model model struct pointer
  */
 void model_free(TinyTCNModel *model);
 
 /**
- * @brief 打印模型信息
- * @param model 模型结构指针
+ * @brief Print model info
+ * @param model model struct pointer
  */
 void model_print_info(const TinyTCNModel *model);
 
 /**
- * @brief 计算模型权重大小 (字节)
- * @param model 模型结构指针
- * @return 权重字节数
+ * @brief Calculate model weight size (bytes)
+ * @param model model struct pointer
+ * @return weight bytes
  */
 size_t model_weight_bytes(const TinyTCNModel *model);
 

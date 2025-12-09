@@ -1,6 +1,6 @@
 /**
  * @file model.c
- * @brief TinyGRU INT8 模型加载实现
+ * @brief TinyGRU INT8 model loading implementation
  */
 
 #include "model.h"
@@ -9,7 +9,7 @@
 #include <string.h>
 
 /* ========================================
- *          内部辅助函数
+ *          Internal helpers
  * ======================================== */
 
 static int read_u32(FILE *f, uint32_t *val) {
@@ -33,7 +33,7 @@ static int read_i32_array(FILE *f, int32_t *arr, int count) {
 }
 
 /* ========================================
- *          公共 API 实现
+ *          Public API
  * ======================================== */
 
 int model_load(TinyGRUModel *model, const char *filepath) {
@@ -45,7 +45,7 @@ int model_load(TinyGRUModel *model, const char *filepath) {
     
     memset(model, 0, sizeof(TinyGRUModel));
     
-    // 读取 Header
+    // Read header
     uint32_t magic;
     if (read_u32(f, &magic) < 0 || magic != 0x47525538) {
         fprintf(stderr, "[Error] Invalid magic number: 0x%08X\n", magic);
@@ -69,7 +69,7 @@ int model_load(TinyGRUModel *model, const char *filepath) {
     int H = hidden_size;
     int I = input_size;
     
-    // 读取激活值量化参数
+    // Read activation quantization parameters
     if (read_f32(f, &model->input_scale) < 0 ||
         read_i32(f, &model->input_zp) < 0 ||
         read_f32(f, &model->gru_out_scale) < 0 ||
@@ -81,7 +81,7 @@ int model_load(TinyGRUModel *model, const char *filepath) {
         return -1;
     }
     
-    // 读取 GRU 层
+    // Read GRU layer
     for (int layer = 0; layer < num_layers; layer++) {
         GRULayerParams *gru = &model->gru_layers[layer];
         
@@ -128,7 +128,7 @@ int model_load(TinyGRUModel *model, const char *filepath) {
         }
     }
     
-    // 读取 Head 层
+    // Read head layer
     LinearParams *head = &model->head;
     head->in_features = H;
     head->out_features = 1;
@@ -199,14 +199,14 @@ size_t model_weight_bytes(const TinyGRUModel *model) {
     
     size_t total = 0;
     
-    // GRU 层
+    // GRU layers
     for (int i = 0; i < model->num_layers; i++) {
         total += 3 * H * I;     // w_ih
         total += 3 * H * H;     // w_hh
-        // bias 以 int32 存储，但这里只计算 int8 等效
+        // bias stored as int32; counting int8 equivalent only
     }
     
-    // Head 层
+    // Head layer
     total += H;  // weight
     
     return total;

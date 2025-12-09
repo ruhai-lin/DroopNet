@@ -1,18 +1,18 @@
 """
-TinyGRU - INT8 量化友好的 GRU 模型用于 PDN Droop 预测
-目标: 权重 + 激活 < 6KB (ASIC 8KB SRAM)
+TinyGRU - INT8-friendly GRU model for PDN droop prediction
+Goal: weights + activations < 6KB (ASIC 8KB SRAM)
 
-GRU 参数计算:
+GRU parameter breakdown:
 - weight_ih: (3*H, I) -> 3*H*I
 - weight_hh: (3*H, H) -> 3*H*H
 - bias_ih + bias_hh: 6*H
-- 总参数: 3*H*(I + H + 2)
+- Total params: 3*H*(I + H + 2)
 
-默认配置 (H=36, I=9):
-- GRU权重: 3*36*(9+36+2) = 5076 bytes
-- Head权重: 36+1 = 37 bytes
-- 激活(seq=50): 50*9 + 36 = 486 bytes
-- 总计: ~5.6KB
+Default config (H=36, I=9):
+- GRU weights: 3*36*(9+36+2) = 5076 bytes
+- Head weights: 36+1 = 37 bytes
+- Activations (seq=50): 50*9 + 36 = 486 bytes
+- Total: ~5.6KB
 """
 
 import torch
@@ -22,7 +22,7 @@ import torch.ao.quantization as tq
 
 class TinyGRUInt8(nn.Module):
     """
-    紧凑型 GRU 模型，专为 INT8 量化和 ASIC 部署设计。
+    Compact GRU model designed for INT8 quantization and ASIC deployment.
     """
     
     def __init__(
@@ -37,7 +37,7 @@ class TinyGRUInt8(nn.Module):
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         
-        # GRU 层
+        # GRU layer
         self.gru = nn.GRU(
             input_size=input_size,
             hidden_size=hidden_size,
@@ -46,17 +46,17 @@ class TinyGRUInt8(nn.Module):
             bias=True,
         )
         
-        # 分类头
+        # Classification head
         self.head = nn.Linear(hidden_size, 1, bias=True)
         
-        # 量化 Stubs (用于校准)
+        # Quantization stubs (for calibration)
         self.quant = tq.QuantStub()
         self.dequant = tq.DeQuantStub()
         
         self._init_weights()
     
     def _init_weights(self):
-        """Xavier 初始化"""
+        """Xavier initialization"""
         for name, param in self.gru.named_parameters():
             if 'weight_ih' in name:
                 nn.init.xavier_uniform_(param)
@@ -70,13 +70,13 @@ class TinyGRUInt8(nn.Module):
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        前向传播
+        Forward pass
         
         Args:
-            x: 输入张量，形状 (B, T, C) 或 uint8 ADC 码
+            x: input tensor, shape (B, T, C) or uint8 ADC codes
             
         Returns:
-            logits: 形状 (B, 1) 的预测 logits
+            logits: predicted logits of shape (B, 1)
         """
         if x.dtype == torch.uint8:
             x = x.float() / 255.0
@@ -91,13 +91,13 @@ class TinyGRUInt8(nn.Module):
         return self.dequant(logits)
     
     def footprint_bytes(self, seq_len: int = 50, batch_size: int = 1) -> dict:
-        """估算 INT8 量化后的内存占用"""
-        # GRU 权重: weight_ih (3*H, I) + weight_hh (3*H, H) + bias (6*H)
+        """Estimate memory footprint after INT8 quantization"""
+        # GRU weights: weight_ih (3*H, I) + weight_hh (3*H, H) + bias (6*H)
         gru_weights = 3 * self.hidden_size * (self.input_size + self.hidden_size + 2)
         head_weights = self.hidden_size + 1
         total_weight_bytes = gru_weights + head_weights
         
-        # 激活值: 输入 + 隐藏状态
+        # Activations: input + hidden state
         input_act = seq_len * self.input_size * batch_size
         hidden_act = self.hidden_size * batch_size
         total_activation_bytes = input_act + hidden_act
@@ -109,7 +109,7 @@ class TinyGRUInt8(nn.Module):
         }
     
     def get_export_info(self) -> dict:
-        """获取导出信息"""
+        """Get export info"""
         return {
             "input_size": self.input_size,
             "hidden_size": self.hidden_size,

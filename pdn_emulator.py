@@ -4,62 +4,62 @@ import matplotlib.pyplot as plt
 import time
 import struct
 
-# --- 1. 配置参数 (Configuration) ---
+# --- 1. Configuration ---
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 BATCH_SIZE = 1024
 
-# 频率设置
-PHYSICS_FREQ = 1e9    # 1 GHz (物理模拟)
-SENSOR_FREQ  = 5e6    # 5 MHz (传感器采样, 200ns/step)
-NN_FREQ      = 5e6    # 神经网络频率
+# Frequency settings
+PHYSICS_FREQ = 1e9    # 1 GHz (physical simulation)
+SENSOR_FREQ  = 5e6    # 5 MHz (sensor sampling, 200ns/step)
+NN_FREQ      = 5e6    # Neural network frequency
 
-# 采样精度设置
+# Sampling resolution
 ADC_BITS = 8
 V_ADC_MIN = 1.0
 V_ADC_MAX = 1.5
 I_ADC_MIN = 0.0
-I_ADC_MAX = 22.0      #稍微留点余量
+I_ADC_MAX = 22.0      # leave a bit of margin
 
-# 物理参数
+# Physical parameters
 C_NODE   = 2.2e-6      
 L_SERIES = 500e-12     
-R_SERIES = 0.006       # <--- 关键修改: 增大电阻 (0.003->0.006). 
-                       # 解释: 因为爬坡慢了，电感效应变弱，必须靠电阻压降来保证 20A 时电压一定跌落。
-                       # 20A * 0.006 = 0.12V. 1.4 - 0.12 = 1.28V (< 1.30V Threshold). 稳!
+R_SERIES = 0.006       # <--- Key change: increase resistor (0.003->0.006).
+                       # Rationale: slower ramp reduces inductive effect; rely on resistor drop to ensure voltage dips at 20A.
+                       # 20A * 0.006 = 0.12V. 1.4 - 0.12 = 1.28V (< 1.30V threshold). Safe!
 
 V_SUPPLY = 1.4         
 V_DROOP_TH = 1.30      
 
-# 负载参数
+# Load parameters
 I_BASE   = 5.0           
 I_MEDIUM = 10.0        # 10A * 0.006 = 0.06V Drop -> 1.34V (Safe)
 I_MAX    = 20.0        # 20A * 0.006 = 0.12V Drop -> 1.28V (Droop)
 
-# 爬坡设置 (极慢爬坡，特征极其明显)
-RAMP_TIME_US = 5.0     # <--- 关键修改: 5微秒的爬坡时间!
+# Ramp settings (very slow ramp, very clear signature)
+RAMP_TIME_US = 5.0     # <--- Key change: 5 microsecond ramp time!
 RAMP_STEPS_PHYS = int(RAMP_TIME_US * 1e-6 * PHYSICS_FREQ) # 5000 steps
 
 SLEW_RATE = (I_MAX - I_BASE) / RAMP_STEPS_PHYS
 
-# 状态机概率 (因为动作变慢了，概率要相应调低，避免重叠)
+# State machine probabilities (slower actions, lower probabilities to avoid overlap)
 PROB_IDLE_TO_RAMP = 0.00002 
 PROB_HOLD_TO_DOWN = 0.0002
 
-# 时间设置 (延长总时间以收集足够样本)
+# Time settings (extend duration to collect enough samples)
 TOTAL_TIME_US = 400.0 
 STEPS = int(TOTAL_TIME_US * 1e-6 * PHYSICS_FREQ)
 
-# 预测设置
+# Prediction settings
 PREDICTION_HORIZON_US = 2.0
 HORIZON_STEPS = int(PREDICTION_HORIZON_US * 1e-6 * SENSOR_FREQ)
 
-# 窗口设置 (给模型更长的记忆)
-WINDOW_SIZE = 50       # <--- 关键修改: 50个点 (10us)，足够覆盖整个 5us 的爬坡过程
+# Window settings (give the model longer memory)
+WINDOW_SIZE = 50       # <--- Key change: 50 points (10us), enough to cover the entire 5us ramp
 
 print(f"Running on {DEVICE}. Batch: {BATCH_SIZE}. Window: {WINDOW_SIZE}. Ramp: {RAMP_TIME_US}us")
 
-# --- 2. 辅助函数 ---
+# --- 2. Helper Functions ---
 @torch.jit.script
 def val_to_adc_code(val: torch.Tensor, min_val: float, max_val: float) -> torch.Tensor:
     norm = (val - min_val) / (max_val - min_val)
@@ -70,7 +70,7 @@ def val_to_adc_code(val: torch.Tensor, min_val: float, max_val: float) -> torch.
 def adc_code_to_val(code: torch.Tensor, min_val: float, max_val: float) -> torch.Tensor:
     return code / 255.0 * (max_val - min_val) + min_val
 
-# --- 3. 物理核心 ---
+# --- 3. Physics core ---
 @torch.jit.script
 def rlc_step(v_cap, i_ind, i_load,
              v_supply: float, r_series: float, l_series: float, c_node: float, dt: float):
@@ -82,7 +82,7 @@ def rlc_step(v_cap, i_ind, i_load,
     new_v_cap = v_cap + d_v_cap
     return new_v_cap, new_i_ind
 
-# --- 4. 主流程 ---
+# --- 4. Main flow ---
 def main():
     start_time = time.time()
 
@@ -150,7 +150,7 @@ def main():
         i_load_analog = i_load_analog + step_change
 
         # Noise
-        noise = torch.randn_like(i_load_analog) * 0.02 # 减少一点噪声，让曲线更平滑易学
+        noise = torch.randn_like(i_load_analog) * 0.02 # Reduce noise slightly so curves are smoother/easier to learn
         i_load_analog = i_load_analog + noise
         i_load_analog = torch.clamp(i_load_analog, 0.0, I_MAX * 1.5)
 
@@ -172,10 +172,10 @@ def main():
 
     print(f"Simulation finished. {STEPS * BATCH_SIZE / (time.time() - start_time) / 1e6:.2f} M-Steps/s")
 
-    # --- 5. 可视化检查 ---
+    # --- 5. Visualization check ---
     DROOP_CODE = int((V_DROOP_TH - V_ADC_MIN) / (V_ADC_MAX - V_ADC_MIN) * 255)
     
-    # 查找包含 Droop 的 Batch
+    # Find batches that contain droop
     min_codes = sensor_history_V.min(dim=0)[0].min(dim=1)[0]
     droop_batches = torch.where(min_codes < DROOP_CODE)[0]
     
@@ -198,7 +198,7 @@ def main():
         ax2.plot(t_axis, trace_I[:, i], 'orange', label='I', alpha=0.8, linewidth=1.5)
         ax2.set_ylim(0, 24)
         
-        # 标记 Droop
+        # Mark droop
         is_droop = trace_V[:, i] < V_DROOP_TH
         ax.fill_between(t_axis, V_ADC_MIN, V_ADC_MAX, where=is_droop, color='red', alpha=0.2, transform=ax.get_xaxis_transform())
         
@@ -207,7 +207,7 @@ def main():
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     plt.show()
 
-    # --- 6. 生成宽窗口数据集 ---
+    # --- 6. Generate wide-window dataset ---
     print(f"Generating Dataset with Window Size = {WINDOW_SIZE}...")
     
     raw_I = sensor_history_I.permute(1, 0, 2) # [Batch, Time, 9]
@@ -217,11 +217,11 @@ def main():
 
     step_size = 1
     
-    # 展开窗口
+    # Unfold windows
     X_windows = raw_I.unfold(1, WINDOW_SIZE, step_size)
     num_windows = X_windows.shape[1]
     
-    # 构建标签 (预测未来)
+    # Build labels (predict the future)
     y_labels = torch.zeros((BATCH_SIZE, num_windows), dtype=torch.float32)
     
     print(f"Labelling {num_windows} windows...")
@@ -246,41 +246,41 @@ def main():
     print("-" * 30)
     
     if (y_final==1).sum() > 0:
-        # --- 7.1 导出 ASIC Verification Binary (.bin) ---
-        # 格式: [Header] + 循环([Data X] + [Label y])
+        # --- 7.1 Export ASIC Verification Binary (.bin) ---
+        # Format: [Header] + loop([Data X] + [Label y])
         print("Exporting Verification Vectors for C Model...")
         
-        # 1. 转换为 Numpy
+        # 1. Convert to numpy
         X_numpy = X_final.cpu().numpy() # uint8
         y_numpy = y_final.cpu().numpy() # float
         
-        # 2. 筛选 50 Pos / 50 Neg
+        # 2. Select 50 Pos / 50 Neg
         pos_indices = np.where(y_numpy == 1)[0]
         neg_indices = np.where(y_numpy == 0)[0]
         
         N_POS = 50
         N_NEG = 50
         
-        # 防止样本不够
+        # Guard against insufficient samples
         real_n_pos = min(len(pos_indices), N_POS)
         real_n_neg = min(len(neg_indices), N_NEG)
         
-        # 随机抽取
+        # Random selection
         sel_pos = np.random.choice(pos_indices, real_n_pos, replace=False)
         sel_neg = np.random.choice(neg_indices, real_n_neg, replace=False)
         
-        # 合并并打乱
+        # Combine and shuffle
         indices = np.concatenate([sel_pos, sel_neg])
         np.random.shuffle(indices)
         
         X_subset = X_numpy[indices]      # uint8
-        y_subset = y_numpy[indices].astype(np.uint8) # float -> uint8 (重要!)
+        y_subset = y_numpy[indices].astype(np.uint8) # float -> uint8 (important!)
         
         output_bin = "pdn_dataset_uint8.bin"
         total_samples = len(indices)
         channels = 9
         
-        # 3. 写入二进制文件
+        # 3. Write binary file
         with open(output_bin, 'wb') as f:
             # Header: Magic(0xAABBCCDD), N, W, C
             header = struct.pack('Iiii', 0xAABBCCDD, total_samples, WINDOW_SIZE, channels)
@@ -288,8 +288,8 @@ def main():
             
             # Data Loop: X then y
             for i in range(total_samples):
-                f.write(X_subset[i].tobytes()) # 写入 50*9 bytes
-                f.write(y_subset[i].tobytes()) # 写入 1 byte
+                f.write(X_subset[i].tobytes()) # write 50*9 bytes
+                f.write(y_subset[i].tobytes()) # write 1 byte
                 
         print(f"Done! Saved {total_samples} samples to '{output_bin}'")
         np.savez("pdn_dataset_uint8.npz", X=X_final.cpu().numpy(), y=y_final.cpu().numpy())

@@ -1,6 +1,6 @@
 /**
  * @file inference.c
- * @brief TinyGRU INT8 推理实现 - ASIC Golden Model
+ * @brief TinyGRU INT8 inference implementation - ASIC Golden Model
  */
 
 #include "inference.h"
@@ -9,7 +9,7 @@
 #include <math.h>
 
 /* ========================================
- *          缓冲区管理
+ *          Buffer management
  * ======================================== */
 
 int inference_buffer_init(InferenceBuffer *buf, int hidden_size) {
@@ -36,7 +36,7 @@ void inference_buffer_reset(InferenceBuffer *buf, int hidden_size) {
 }
 
 /* ========================================
- *          量化基础运算
+ *          Quantization basics
  * ======================================== */
 
 int8_t quantize_int8(float val, float scale, int32_t zp) {
@@ -51,11 +51,11 @@ float dequantize_int8(int8_t val, float scale, int32_t zp) {
 }
 
 /* ========================================
- *          激活函数
+ *          Activation functions
  * ======================================== */
 
 static float sigmoid_f(float x) {
-    // 防止溢出
+    // Prevent overflow
     if (x < -50.0f) return 0.0f;
     if (x > 50.0f) return 1.0f;
     return 1.0f / (1.0f + expf(-x));
@@ -66,18 +66,18 @@ static float tanh_f(float x) {
 }
 
 /* ========================================
- *          GRU Cell 实现
+ *          GRU cell implementation
  * ======================================== */
 
 /**
- * @brief INT8 矩阵向量乘法 + bias
+ * @brief INT8 matrix-vector multiply + bias
  * 
- * 计算: out = W @ x + b (量化版本)
+ * Compute: out = W @ x + b (quantized)
  * W: [out_size, in_size], int8
  * x: [in_size], int8
  * b: [out_size], int32
  * 
- * 返回反量化后的浮点结果
+ * Returns dequantized float result
  */
 static void matmul_int8(float *out,
                         const int8_t *W, const int8_t *x,
@@ -91,16 +91,16 @@ static void matmul_int8(float *out,
     for (int i = 0; i < out_size; i++) {
         int32_t acc = 0;
         
-        // INT8 矩阵乘法
+        // INT8 matmul
         for (int j = 0; j < in_size; j++) {
-            // 注意: input 需要减去 zero point
+            // Note: input needs zero-point subtraction
             acc += (int32_t)W[i * in_size + j] * ((int32_t)x[j] - x_zp);
         }
         
-        // 加上 bias
+        // Add bias
         acc += bias[i];
         
-        // 反量化
+        // Dequantize
         out[i] = (float)acc * scale;
     }
 }
@@ -116,17 +116,17 @@ void gru_cell(int8_t *h_out,
     int H = model->hidden_size;
     int I = model->input_size;
     
-    // 门计算缓冲区
-    float *gates_ih = buf->gate_buffer;           // [3*H] 用于 W_ih @ x
-    float *gates_hh = buf->gate_buffer;           // 复用，分步计算
+    // Gate computation buffers
+    float *gates_ih = buf->gate_buffer;           // [3*H] for W_ih @ x
+    float *gates_hh = buf->gate_buffer;           // reused, computed in steps
     
-    // 临时存储
+    // Temporary storage
     float r_ih[HIDDEN_SIZE], z_ih[HIDDEN_SIZE], n_ih[HIDDEN_SIZE];
     float r_hh[HIDDEN_SIZE], z_hh[HIDDEN_SIZE], n_hh[HIDDEN_SIZE];
     
-    // 1. 计算 W_ih @ x_t + b_ih
-    // 分三个门: r, z, n
-    // 输入 x_t 需要减去 input_zp
+    // 1. Compute W_ih @ x_t + b_ih
+    // Split into three gates: r, z, n
+    // Input x_t needs zero-point subtraction
     matmul_int8(gates_ih, gru->w_ih_int8, x_t, gru->b_ih_int32,
                 3 * H, I, gru->w_ih_scale, model->input_scale, model->input_zp);
     
@@ -136,8 +136,8 @@ void gru_cell(int8_t *h_out,
         n_ih[i] = gates_ih[2 * H + i];
     }
     
-    // 2. 计算 W_hh @ h_{t-1} + b_hh
-    // 隐藏状态 h_prev 是对称量化的 (zp=0)，所以传入 zp=0
+    // 2. Compute W_hh @ h_{t-1} + b_hh
+    // Hidden state h_prev is symmetric-quantized (zp=0), so pass zp=0
     matmul_int8(gates_hh, gru->w_hh_int8, h_prev, gru->b_hh_int32,
                 3 * H, H, gru->w_hh_scale, model->gru_out_scale, 0);
     
@@ -147,7 +147,7 @@ void gru_cell(int8_t *h_out,
         n_hh[i] = gates_hh[2 * H + i];
     }
     
-    // 3. 计算各门
+    // 3. Compute gates
     float r_t[HIDDEN_SIZE], z_t[HIDDEN_SIZE], n_t[HIDDEN_SIZE];
     
     for (int i = 0; i < H; i++) {
@@ -161,19 +161,19 @@ void gru_cell(int8_t *h_out,
         n_t[i] = tanh_f(n_ih[i] + r_t[i] * n_hh[i]);
     }
     
-    // 4. 计算新的隐藏状态
+    // 4. Compute new hidden state
     // h_t = (1 - z_t) * n_t + z_t * h_{t-1}
     for (int i = 0; i < H; i++) {
         float h_prev_f = dequantize_int8(h_prev[i], model->gru_out_scale, model->gru_out_zp);
         float h_new = (1.0f - z_t[i]) * n_t[i] + z_t[i] * h_prev_f;
         
-        // 重新量化
+        // Requantize
         h_out[i] = quantize_int8(h_new, model->gru_out_scale, model->gru_out_zp);
     }
 }
 
 /* ========================================
- *          Linear 层
+ *          Linear layer
  * ======================================== */
 
 float int8_linear(const int8_t *input, const TinyGRUModel *model) {
@@ -186,16 +186,16 @@ float int8_linear(const int8_t *input, const TinyGRUModel *model) {
         acc += (int32_t)head->w_int8[i] * (int32_t)input[i];
     }
     
-    // 加 bias
+    // Add bias
     acc += head->b_int32[0];
     
-    // 反量化
+    // Dequantize
     float scale = head->w_scale * model->gru_out_scale;
     return (float)acc * scale;
 }
 
 /* ========================================
- *          完整推理
+ *          Full inference
  * ======================================== */
 
 float inference_forward(const TinyGRUModel *model, 
@@ -205,24 +205,24 @@ float inference_forward(const TinyGRUModel *model,
     int I = model->input_size;
     int H = model->hidden_size;
     
-    // 1. 重置隐藏状态
+    // 1. Reset hidden state
     inference_buffer_reset(buf, H);
     
-    // 2. 量化输入并遍历时间步
+    // 2. Quantize inputs and iterate timesteps
     int8_t x_t[INPUT_SIZE];
     
     for (int t = 0; t < WINDOW_SIZE; t++) {
-        // 量化当前时间步的输入
+        // Quantize input at current timestep
         for (int c = 0; c < I; c++) {
             float val = (float)input[t * I + c] / 255.0f;
             x_t[c] = quantize_int8(val, model->input_scale, model->input_zp);
         }
         
-        // GRU cell 计算
+        // GRU cell computation
         int8_t h_new[HIDDEN_SIZE];
         gru_cell(h_new, buf->h_state, x_t, model, buf, 0);
         
-        // 更新隐藏状态
+        // Update hidden state
         memcpy(buf->h_state, h_new, H * sizeof(int8_t));
     }
     

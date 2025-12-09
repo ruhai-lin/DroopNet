@@ -1,10 +1,10 @@
 """
-TinyGRU 训练脚本 - 训练 + 校准 + INT8 导出
+TinyGRU training script - train + calibrate + INT8 export
 
-针对 ASIC 部署:
-1. 训练浮点模型
-2. 校准激活值范围 (计算 Scale/ZP)
-3. 导出 INT8 权重二进制文件 (bias 转 INT32)
+For ASIC deployment:
+1. Train floating-point model
+2. Calibrate activation ranges (compute Scale/ZP)
+3. Export INT8 weight binary (bias converted to INT32)
 """
 
 import copy
@@ -64,7 +64,7 @@ class PDNDataset(Dataset):
 #          Calibration & Quantization
 # ==========================================
 class ActivationCalibrator:
-    """收集激活值统计信息，计算量化参数"""
+    """Collect activation statistics and compute quantization parameters"""
     
     def __init__(self):
         self.min_vals = {}
@@ -84,7 +84,7 @@ class ActivationCalibrator:
             self.max_vals[name] = max(self.max_vals[name], t.max().item())
     
     def compute_scale_zp(self, name: str, symmetric: bool = True):
-        """计算量化参数 (Signed INT8: -128 to 127)"""
+        """Compute quantization params (Signed INT8: -128 to 127)"""
         min_val = self.min_vals.get(name, 0)
         max_val = self.max_vals.get(name, 1)
         
@@ -107,7 +107,7 @@ class ActivationCalibrator:
 
 
 def calibrate_model(model: nn.Module, loader: DataLoader, device) -> ActivationCalibrator:
-    """校准模型，收集激活值范围"""
+    """Calibrate model and collect activation ranges"""
     print("[Calibration] Collecting activation statistics...")
     
     model.eval()
@@ -117,18 +117,18 @@ def calibrate_model(model: nn.Module, loader: DataLoader, device) -> ActivationC
         for X, _ in tqdm(loader, desc="Calibrate", leave=False):
             X = X.to(device)
             
-            # 记录输入
+            # Record input
             calibrator.update("input", X)
             
-            # GRU 前向
+            # GRU forward
             output, _ = model.gru(X)
             calibrator.update("gru_output", output)
             
-            # 最后一个时间步
+            # Last timestep
             last_output = output[:, -1, :]
             calibrator.update("head_input", last_output)
             
-            # Head 输出
+            # Head output
             logits = model.head(last_output)
             calibrator.update("head_output", logits)
     
@@ -137,7 +137,7 @@ def calibrate_model(model: nn.Module, loader: DataLoader, device) -> ActivationC
 
 
 def quantize_weight(tensor: torch.Tensor) -> tuple:
-    """量化权重为 INT8"""
+    """Quantize weights to INT8"""
     t = tensor.detach().cpu()
     abs_max = t.abs().max().item()
     scale = abs_max / 127.0 if abs_max > 0 else 1.0
@@ -148,7 +148,7 @@ def quantize_weight(tensor: torch.Tensor) -> tuple:
 
 
 def quantize_bias(bias: torch.Tensor, input_scale: float, weight_scale: float) -> np.ndarray:
-    """量化 Bias 为 INT32"""
+    """Quantize bias to INT32"""
     b = bias.detach().cpu().numpy()
     scale = input_scale * weight_scale
     if scale == 0:
@@ -162,9 +162,9 @@ def quantize_bias(bias: torch.Tensor, input_scale: float, weight_scale: float) -
 # ==========================================
 def export_gru_binary(model: nn.Module, calibrator: ActivationCalibrator, filepath: str):
     """
-    导出 GRU 模型为二进制格式
+    Export GRU model to binary format
     
-    文件格式:
+    File format:
     [Header]
       - Magic: 0x47525538 ('GRU8')
       - input_size, hidden_size, num_layers (int32 x 3)
@@ -191,7 +191,7 @@ def export_gru_binary(model: nn.Module, calibrator: ActivationCalibrator, filepa
     H = info['hidden_size']
     I = info['input_size']
     
-    # 获取激活值量化参数
+    # Get activation quantization params
     input_scale, input_zp = calibrator.compute_scale_zp("input", symmetric=False)
     gru_out_scale, gru_out_zp = calibrator.compute_scale_zp("gru_output", symmetric=True)
     head_out_scale, head_out_zp = calibrator.compute_scale_zp("head_output", symmetric=True)
@@ -366,7 +366,7 @@ def main():
     torch.save(model.state_dict(), "../outputs/tiny_gru_float.pth")
     print("Saved float model to ../outputs/tiny_gru_float.pth")
 
-    # 5. Calibration (相当于 PTQ 校准)
+    # 5. Calibration (equivalent to PTQ calibration)
     print("-" * 60)
     print("Starting Calibration...")
     print("-" * 60)
@@ -374,14 +374,14 @@ def main():
     model.cpu().eval()
     calibrator = calibrate_model(model, val_loader, device=torch.device("cpu"))
 
-    # 6. 导出文件
+    # 6. Export files
     os.makedirs("../outputs", exist_ok=True)
     
-    # A. PyTorch 格式 (用于 Python 推理)
+    # A. PyTorch format (for Python inference)
     torch.save(model.state_dict(), "../outputs/tiny_gru_int8.pth")
     print("Saved INT8 model to ../outputs/tiny_gru_int8.pth")
     
-    # B. 嵌入式格式 (Raw Binary)
+    # B. Embedded-friendly format (Raw Binary)
     export_gru_binary(model, calibrator, "../outputs/tiny_gru_int8.bin")
 
     print("-" * 60)

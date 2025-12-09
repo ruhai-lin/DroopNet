@@ -9,7 +9,7 @@ from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_sc
 from torch.utils.data import DataLoader, Dataset, random_split
 from tqdm import tqdm
 
-# 假设 model.py 在同级目录下
+# Assume model.py is in the same directory
 from model import TinyTCNInt8
 
 # ==========================================
@@ -24,7 +24,7 @@ NUM_WORKERS = 4
 
 # PTQ Settings
 Q_ENGINE = "fbgemm"
-CALIBRATION_BATCHES = 100  # 用于校准的批次数
+CALIBRATION_BATCHES = 100  # number of batches used for calibration
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.backends.quantized.engine = Q_ENGINE
@@ -242,7 +242,7 @@ def prepare_dataloaders():
 @torch.no_grad()
 def calibrate_model(model, loader, num_batches):
     """
-    使用校准数据集收集量化统计信息 (PTQ 核心步骤)
+    Collect quantization statistics using a calibration dataset (core PTQ step)
     """
     model.eval()
     print(f"[PTQ] Calibrating with {num_batches} batches...")
@@ -250,7 +250,7 @@ def calibrate_model(model, loader, num_batches):
     for i, (X, _) in enumerate(loader):
         if i >= num_batches:
             break
-        X = X.to(torch.device("cpu"))  # PTQ 校准在 CPU 上进行
+        X = X.to(torch.device("cpu"))  # PTQ calibration runs on CPU
         model(X)
         
         if (i + 1) % 10 == 0:
@@ -267,7 +267,7 @@ def main():
     print(f"TinyTCN PTQ Training | Device: {DEVICE}")
     print("-" * 60)
 
-    # 1. Setup Data & Model (普通浮点训练，不使用 QAT)
+    # 1. Setup Data & Model (standard float training, no QAT)
     train_loader, val_loader = prepare_dataloaders()
     
     model = TinyTCNInt8()
@@ -283,7 +283,7 @@ def main():
     best_f1 = 0.0
     best_state = None
 
-    # 3. Training Loop (普通浮点训练)
+    # 3. Training Loop (standard float training)
     for epoch in range(EPOCHS):
         t_loss = train_one_epoch(model, train_loader, criterion, optimizer)
         metrics = evaluate(model, val_loader, criterion)
@@ -304,7 +304,7 @@ def main():
         print(f"\nLoading best model (F1: {best_f1:.4f})...")
         model.load_state_dict(best_state)
     
-    # 保存浮点模型 checkpoint
+    # Save float model checkpoint
     torch.save(model.state_dict(), "../outputs/tiny_tcn_float.pth")
     print("Saved float model to ../outputs/tiny_tcn_float.pth")
 
@@ -313,41 +313,41 @@ def main():
     print("Starting Post-Training Quantization (PTQ)...")
     print("-" * 60)
     
-    # 将模型移至 CPU 进行 PTQ
+    # Move model to CPU for PTQ
     model.cpu().eval()
     
     # 5.1 Fuse Modules (Conv + ReLU)
     print("[PTQ] Fusing modules...")
     model.fuse_model()
     
-    # 5.2 设置量化配置
+    # 5.2 Set up quantization config
     print("[PTQ] Setting up quantization config...")
     model.qconfig = tq.get_default_qconfig(Q_ENGINE)
     
-    # 5.3 Prepare for PTQ (插入 Observer，但不是伪量化节点)
+    # 5.3 Prepare for PTQ (insert observers, but not fake-quant nodes)
     print("[PTQ] Preparing model for quantization...")
     tq.prepare(model, inplace=True)
     
-    # 5.4 校准：使用训练数据收集统计信息
+    # 5.4 Calibration: collect statistics using training data
     print("[PTQ] Running calibration...")
     calibrate_model(model, train_loader, CALIBRATION_BATCHES)
     
-    # 5.5 转换为真正的 INT8 模型
+    # 5.5 Convert to real INT8 model
     print("[PTQ] Converting to INT8 model...")
     tq.convert(model, inplace=True)
 
-    # 6. 验证 INT8 模型的精度
+    # 6. Validate INT8 model accuracy
     print("-" * 60)
     print("Validating INT8 Model on CPU...")
     q_metrics = evaluate(model, val_loader, criterion, device=torch.device("cpu"))
     print(f"Final INT8 F1: {q_metrics['f1']:.4f} | Acc: {q_metrics['acc']:.4f}")
 
-    # 7. 导出文件
-    # A. PyTorch 格式 (用于 Python 推理)
+    # 7. Export files
+    # A. PyTorch format (for Python inference)
     torch.save(model.state_dict(), "../outputs/tiny_tcn_int8.pth")
     print("Saved INT8 model to ../outputs/tiny_tcn_int8.pth")
     
-    # B. 嵌入式格式 (Raw Binary, Small Size!)
+    # B. Embedded-friendly format (Raw Binary, Small Size!)
     export_flat_binary(model, "../outputs/tiny_tcn_int8.bin")
 
     print("-" * 60)

@@ -1,6 +1,6 @@
 /**
  * @file model.c
- * @brief TinyTCN INT8 模型加载实现 (PTQ 版本)
+ * @brief TinyTCN INT8 model loading implementation (PTQ version)
  */
 
 #include "model.h"
@@ -9,7 +9,7 @@
 #include <string.h>
 
 /* ========================================
- *          内部辅助函数
+ *          Internal helpers
  * ======================================== */
 
 static int read_f32(FILE *f, float *val) {
@@ -33,7 +33,7 @@ static int read_i8_array(FILE *f, int8_t *arr, int count) {
 }
 
 /**
- * @brief 读取单层参数
+ * @brief Read parameters for a single layer
  */
 static int load_layer_params(FILE *f, LayerParams *layer, 
                              int out_ch, int in_ch, int kernel) {
@@ -41,13 +41,13 @@ static int load_layer_params(FILE *f, LayerParams *layer,
     layer->in_channels = in_ch;
     layer->kernel_size = kernel;
     
-    // 读取量化参数
+    // Read quantization parameters
     if (read_f32(f, &layer->input_scale) < 0) return -1;
     if (read_i32(f, &layer->input_zp) < 0) return -1;
     if (read_f32(f, &layer->output_scale) < 0) return -1;
     if (read_i32(f, &layer->output_zp) < 0) return -1;
     
-    // 分配并读取权重参数
+    // Allocate and read weight parameters
     layer->weight_scales = (float *)malloc(out_ch * sizeof(float));
     layer->weight_zps = (int32_t *)malloc(out_ch * sizeof(int32_t));
     layer->bias_int32 = (int32_t *)malloc(out_ch * sizeof(int32_t));
@@ -69,7 +69,7 @@ static int load_layer_params(FILE *f, LayerParams *layer,
 }
 
 /**
- * @brief 释放单层内存
+ * @brief Free memory for a single layer
  */
 static void free_layer_params(LayerParams *layer) {
     if (layer->weight_scales) { free(layer->weight_scales); layer->weight_scales = NULL; }
@@ -79,7 +79,7 @@ static void free_layer_params(LayerParams *layer) {
 }
 
 /* ========================================
- *          公共 API 实现
+ *          Public API
  * ======================================== */
 
 int model_load(TinyTCNModel *model, const char *filepath) {
@@ -91,12 +91,12 @@ int model_load(TinyTCNModel *model, const char *filepath) {
     
     memset(model, 0, sizeof(TinyTCNModel));
     
-    // Block 配置
+    // Block configuration
     int in_channels[NUM_BLOCKS] = {NUM_INPUTS, CH_BLOCK0, CH_BLOCK1, CH_BLOCK2};
     int out_channels[NUM_BLOCKS] = {CH_BLOCK0, CH_BLOCK1, CH_BLOCK2, CH_BLOCK3};
     int dilations[NUM_BLOCKS] = {DILATION_0, DILATION_1, DILATION_2, DILATION_3};
     
-    // 加载各 Block
+    // Load each block
     for (int i = 0; i < NUM_BLOCKS; i++) {
         BlockParams *block = &model->blocks[i];
         int in_ch = in_channels[i];
@@ -110,7 +110,7 @@ int model_load(TinyTCNModel *model, const char *filepath) {
             goto error;
         }
         
-        // 保存初始输入量化参数
+        // Save initial input quantization parameters
         if (i == 0) {
             model->input_scale = block->conv1.input_scale;
             model->input_zp = block->conv1.input_zp;
@@ -122,7 +122,7 @@ int model_load(TinyTCNModel *model, const char *filepath) {
             goto error;
         }
         
-        // Downsample (1x1 conv) - 仅当 in_ch != out_ch
+        // Downsample (1x1 conv) - only when in_ch != out_ch
         if (in_ch != out_ch) {
             block->has_downsample = 1;
             if (load_layer_params(f, &block->downsample, out_ch, in_ch, 1) < 0) {
@@ -133,7 +133,7 @@ int model_load(TinyTCNModel *model, const char *filepath) {
             block->has_downsample = 0;
         }
         
-        // Block 输出量化参数
+        // Block output quantization parameters
         if (read_f32(f, &block->block_out_scale) < 0) goto error;
         if (read_i32(f, &block->block_out_zp) < 0) goto error;
     }

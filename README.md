@@ -2,11 +2,11 @@
 
 ## 📖 Introduction
 
-**DroopNet** is a neural network benchmark project dedicated to processing temporal data under extreme hardware resource constraints. Our core objective is to identify and optimize the most suitable neural network architectures for **Power Delivery Network (PDN)** voltage droop prediction, specifically targeted for deployment on ASICs with **only 8KB of SRAM**.
+**DroopNet** is a neural network benchmark project dedicated to processing temporal data under extreme hardware resource constraints. Our core objective is to optimize the most suitable neural network architecture for **Power Delivery Network (PDN)** voltage droop prediction, specifically targeted for deployment on ASICs with **only 8KB of SRAM**.
 
-This project implements **Proactive voltage droop mitigation techniques for high performance processors**, a concept detailed in the thesis by Jimmy Zhang (see [University of Illinois IDEALS](https://www.ideals.illinois.edu/items/126738)).
+We selected **Temporal Convolutional Network (TCN)** as our primary architecture due to its superior parallelizability, deterministic memory access patterns, and excellent support in modern deep learning frameworks compared to RNNs (like GRU/LSTM). This project is inspired by **Proactive voltage droop mitigation techniques for high performance processors**, a concept detailed in the thesis by Jimmy Zhang (see [University of Illinois IDEALS](https://www.ideals.illinois.edu/items/126738)).
 
-By comparing various temporal architectures (such as GRU, TCN, etc.), we aim to find the optimal balance between accuracy, latency, and area (PPA), providing an intelligent core for next-generation high-performance power management chips.
+The project focuses on finding the optimal balance between accuracy, latency, and area (PPA), providing an intelligent core for next-generation high-performance power management chips.
 
 ---
 
@@ -31,52 +31,84 @@ The data is generated from a high-fidelity RLC physical simulation environment (
 
 ## 🛠️ Hardware & Model Constraints
 
-To ensure efficient operation on low-cost ASICs, all models must strictly adhere to the following design specifications:
+To ensure efficient operation on low-cost ASICs, the TCN model strictly adheres to the following design specifications:
 
 ### 1. Memory Budget
 - **Total SRAM**: 8KB (8192 Bytes).
 - **Target Usage**: **< 6KB**.
-  - *Note*: Approximately 2KB is reserved for system control logic, register configuration, and I/O buffering. The sum of model Weights, Biases, and runtime Activations (Buffers) must not exceed 6KB.
+  - *Note*: Approximately 2KB is reserved for system control logic, register configuration, and I/O buffering. The sum of model Weights, Biases, and runtime Activations (Ping-Pong Buffers) must not exceed 6KB.
 
 ### 2. Quantization Scheme
-All models use **W8A8** integer and fixed-point arithmetic, completely eliminating floating-point operations:
+The model uses **W8A8** integer and fixed-point arithmetic, completely eliminating floating-point operations:
 - **Strategy**: Post-Training Quantization (PTQ).
 - **Weights**: **INT8** (Symmetric/Asymmetric quantization).
 - **Bias**: **INT32** (To prevent accumulation overflow).
 - **Activations**: **INT8** (Output of every layer is re-quantized to 8-bit).
 - **Advantage**: Simplifies ASIC MAC unit design and significantly reduces power consumption.
 
-### 3. Project Structure
-To achieve seamless delivery from algorithm to RTL, each network architecture (e.g., `GRU/`, `TCN/`) contains the following modules:
+### 3. Project Structure (TCN)
+To achieve seamless delivery from algorithm to RTL, the architecture contains the following modules:
 
 - **🐍 PythonModel**:
-  - `model.py`: Defines the floating-point model and Fake Quantization logic.
+  - `model.py`: Defines the TCN architecture and simulates quantization effects (Fake Quantization).
   - `train.py`: Trains the network and exports float32 weights.
   - `inference.py`: Performs quantized inference, generating `.bin` weights and intermediate activation values as "Golden Vectors".
 
 - **⚙️ CModel**:
-  - `inference.c`: Pure C implementation of the fixed-point inference engine.
-  - **Purpose**: Strictly mimics hardware behavior to verify quantization accuracy and serves as a behavioral reference for RTL design.
+  - `model.c/h`: Defines the `TinyTCNModel` structure and functions to load the binary weight file (`.bin`).
+  - `inference.c/h`: The core engine. Implements standard INT8 operators (`Conv1D`, `Add`, `ReLU`, `Linear`) and the TCN block forward pass. It manages memory buffers to ensure zero dynamic allocation during inference.
+  - `main.c`: The test harness. It loads the model and test data (`pdn_dataset_uint8.bin`), runs the inference loop, calculates accuracy/F1 scores, benchmarks latency, and verifies if the total memory footprint fits within the 8KB limit.
 
 ---
 
 ## 🚀 Quick Start
 
-1. **Generate Data**:
-   ```bash
-   python pdn_emulator.py
-   ```
-   This generates training data `pdn_dataset_uint8.npz` and `pdn_dataset_uint8.bin` for C model verification.
+### 1. Environment Setup
 
-2. **Train Model (e.g., GRU)**:
-   ```bash
-   cd GRU/PythonModel
-   python train.py
-   ```
+It is recommended to use a virtual environment:
 
-3. **Verify C Model**:
-   ```bash
-   cd GRU/CModel
-   make
-   ./tiny_gru_test
-   ```
+```bash
+# Create virtual environment
+python -m venv venv
+
+# Activate it
+# On Linux/Mac:
+source venv/bin/activate
+# On Windows:
+# venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### 2. Generate Data
+
+Run the physical emulator to generate training data and verification vectors:
+
+```bash
+python pdn_emulator.py
+```
+This will produce:
+- `pdn_dataset_uint8.npz`: For Python training.
+- `pdn_dataset_uint8.bin`: For C Model verification.
+
+### 3. Train TCN Model
+
+Train the model and export quantized weights:
+
+```bash
+cd TCN/PythonModel
+python train.py
+```
+This saves the model weights to `../../outputs/tiny_tcn_int8.bin`.
+
+### 4. Verify C Model
+
+Compile and run the C reference implementation to verify accuracy and performance:
+
+```bash
+cd ../CModel
+make
+./tiny_tcn_test
+```
+*Check the output to ensure "8KB SRAM Fit" is YES and accuracy matches the Python model.*

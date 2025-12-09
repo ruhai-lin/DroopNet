@@ -9,7 +9,7 @@ from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_sc
 from torch.utils.data import DataLoader, Dataset, random_split
 from tqdm import tqdm
 
-# 假设 model.py 在同级目录下
+# Assume model.py is in the same directory
 from model import TinyTCNInt8
 
 # ==========================================
@@ -23,8 +23,8 @@ VAL_SPLIT = 0.2
 NUM_WORKERS = 4
 
 # QAT Settings
-FREEZE_OBSERVER_EPOCH = 8   # 停止更新量化范围 (Min/Max)
-FREEZE_BN_EPOCH = 9         # 停止更新 BN 统计量 (Mean/Var)
+FREEZE_OBSERVER_EPOCH = 8   # stop updating quantization ranges (Min/Max)
+FREEZE_BN_EPOCH = 9         # stop updating BN statistics (Mean/Var)
 Q_ENGINE = "fbgemm"
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -308,16 +308,16 @@ def main():
     quantized_model = copy.deepcopy(model)
     tq.convert(quantized_model, inplace=True)
 
-    # 验证一下 Int8 模型的精度损失
+    # Check INT8 model accuracy loss
     print("Validating INT8 Model on CPU...")
     q_metrics = evaluate(quantized_model, val_loader, criterion, device=torch.device("cpu"))
     print(f"Final INT8 F1: {q_metrics['f1']:.4f} | Acc: {q_metrics['acc']:.4f}")
 
-    # 导出文件
-    # A. PyTorch 格式 (用于 Python 推理)
+    # Export files
+    # A. PyTorch format (for Python inference)
     torch.save(quantized_model.state_dict(), "../outputs/tiny_tcn_int8.pth")
     
-    # B. 嵌入式格式 (Raw Binary, Small Size!)
+    # B. Embedded-friendly format (Raw Binary, Small Size!)
     export_flat_binary(quantized_model, "../outputs/tiny_tcn_int8.bin")
 
     print("-" * 60)

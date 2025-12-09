@@ -1,13 +1,13 @@
 /**
  * @file main.c
- * @brief TinyTCN INT8 推理测试程序 (PTQ 版本)
+ * @brief TinyTCN INT8 inference test program (PTQ version)
  * 
- * 功能:
- * 1. 加载模型权重
- * 2. 加载测试数据
- * 3. 执行推理
- * 4. 计算 F1 Score
- * 5. 测量 Latency/Throughput
+ * Functions:
+ * 1. Load model weights
+ * 2. Load test data
+ * 3. Run inference
+ * 4. Compute F1 Score
+ * 5. Measure Latency/Throughput
  */
 
 #include <stdio.h>
@@ -20,26 +20,26 @@
 #include "inference.h"
 
 /* ========================================
- *          配置参数
+ *          Configuration
  * ======================================== */
 
 #define WEIGHT_PATH     "../outputs/tiny_tcn_int8.bin"
 #define DATA_PATH       "../../pdn_dataset_uint8.bin"
 
-// 性能测试参数
+// Performance benchmark parameters
 #define WARMUP_RUNS     10
 #define BENCHMARK_RUNS  1000
 
 /* ========================================
- *          数据加载
+ *          Data loading
  * ======================================== */
 
 /**
- * @brief 从 .bin 文件加载测试数据
+ * @brief Load test data from .bin file
  * 
- * 文件格式:
- * - Header: Magic(0xAABBCCDD), N, W, C (各 4 字节)
- * - Data: 循环 N 次 [X: W*C 字节, y: 1 字节]
+ * File format:
+ * - Header: Magic(0xAABBCCDD), N, W, C (4 bytes each)
+ * - Data: repeat N times [X: W*C bytes, y: 1 byte]
  */
 typedef struct {
     uint8_t *X;     // [N, W, C]
@@ -56,7 +56,7 @@ int load_test_data(TestDataset *data, const char *filepath) {
         return -1;
     }
     
-    // 读取 Header
+    // Read header
     uint32_t magic, n, w, c;
     if (fread(&magic, 4, 1, f) != 1 ||
         fread(&n, 4, 1, f) != 1 ||
@@ -79,7 +79,7 @@ int load_test_data(TestDataset *data, const char *filepath) {
     data->window_size = (int)w;
     data->n_channels = (int)c;
     
-    // 分配内存
+    // Allocate memory
     int sample_size = w * c;
     data->X = (uint8_t *)malloc(n * sample_size);
     data->y = (uint8_t *)malloc(n);
@@ -90,7 +90,7 @@ int load_test_data(TestDataset *data, const char *filepath) {
         return -1;
     }
     
-    // 读取数据
+    // Read data
     for (uint32_t i = 0; i < n; i++) {
         if (fread(data->X + i * sample_size, 1, sample_size, f) != (size_t)sample_size) {
             fprintf(stderr, "[Error] Failed to read sample %u X\n", i);
@@ -115,7 +115,7 @@ void free_test_data(TestDataset *data) {
 }
 
 /* ========================================
- *          评估指标
+ *          Evaluation metrics
  * ======================================== */
 
 typedef struct {
@@ -166,7 +166,7 @@ float compute_f1(const ConfusionMatrix *cm) {
 }
 
 /* ========================================
- *          性能测量
+ *          Performance measurement
  * ======================================== */
 
 double get_time_us(void) {
@@ -176,14 +176,14 @@ double get_time_us(void) {
 }
 
 /* ========================================
- *          主函数
+ *          Main function
  * ======================================== */
 
 int main(int argc, char *argv[]) {
     const char *weight_path = WEIGHT_PATH;
     const char *data_path = DATA_PATH;
     
-    // 命令行参数覆盖
+    // Override via command line arguments
     if (argc > 1) weight_path = argv[1];
     if (argc > 2) data_path = argv[2];
     
@@ -191,7 +191,7 @@ int main(int argc, char *argv[]) {
     printf("   TinyTCN INT8 C Model - PTQ Version\n");
     printf("============================================================\n\n");
     
-    // 1. 加载模型
+    // 1. Load model
     printf("[1] Loading Model...\n");
     TinyTCNModel model;
     if (model_load(&model, weight_path) < 0) {
@@ -199,7 +199,7 @@ int main(int argc, char *argv[]) {
     }
     model_print_info(&model);
     
-    // 2. 初始化推理缓冲区
+    // 2. Initialize inference buffer
     printf("[2] Initializing Inference Buffer...\n");
     InferenceBuffer buf;
     if (inference_buffer_init(&buf) < 0) {
@@ -209,7 +209,7 @@ int main(int argc, char *argv[]) {
     }
     printf("    Buffer size: %zu bytes x 4\n\n", buf.buffer_size);
     
-    // 3. 加载测试数据
+    // 3. Load test data
     printf("[3] Loading Test Data...\n");
     TestDataset data;
     if (load_test_data(&data, data_path) < 0) {
@@ -218,7 +218,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    // 验证数据维度
+    // Validate data dimensions
     if (data.window_size != WINDOW_SIZE || data.n_channels != NUM_INPUTS) {
         fprintf(stderr, "[Error] Data dimension mismatch: got (%d, %d), expected (%d, %d)\n",
                 data.window_size, data.n_channels, WINDOW_SIZE, NUM_INPUTS);
@@ -229,7 +229,7 @@ int main(int argc, char *argv[]) {
     }
     printf("    Samples: %d\n\n", data.n_samples);
     
-    // 4. 执行推理并计算精度
+    // 4. Run inference and compute accuracy
     printf("[4] Running Inference...\n");
     int sample_size = data.window_size * data.n_channels;
     float *outputs = (float *)malloc(data.n_samples * sizeof(float));
@@ -242,12 +242,12 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    // 推理所有样本
+    // Inference for all samples
     for (int i = 0; i < data.n_samples; i++) {
         outputs[i] = inference_forward(&model, &buf, data.X + i * sample_size);
     }
     
-    // 计算评估指标
+    // Compute evaluation metrics
     ConfusionMatrix cm;
     compute_confusion_matrix(&cm, outputs, data.y, data.n_samples);
     
@@ -271,7 +271,7 @@ int main(int argc, char *argv[]) {
     printf("  F1 Score:  %.4f\n", f1);
     printf("------------------------------------------------------------\n\n");
     
-    // 5. 性能测试
+    // 5. Performance test
     printf("[5] Performance Benchmark...\n");
     printf("    Warmup: %d runs\n", WARMUP_RUNS);
     printf("    Benchmark: %d runs\n", BENCHMARK_RUNS);
@@ -301,7 +301,7 @@ int main(int argc, char *argv[]) {
     printf("  Throughput:    %.2f KOPS\n", throughput / 1000.0);
     printf("------------------------------------------------------------\n\n");
     
-    // 6. ASIC 相关信息
+    // 6. ASIC reference info
     printf("[6] ASIC Reference Info\n");
     printf("------------------------------------------------------------\n");
     printf("  Weight Size:      %zu bytes\n", model_weight_bytes(&model));
@@ -312,7 +312,7 @@ int main(int argc, char *argv[]) {
            (model_weight_bytes(&model) + 4 * buf.buffer_size) <= 8192 ? "YES" : "NO");
     printf("------------------------------------------------------------\n\n");
     
-    // 7. 输出一些样本结果用于对比验证
+    // 7. Print sample outputs for comparison/verification
     printf("[7] Sample Outputs (for verification)\n");
     printf("------------------------------------------------------------\n");
     printf("  Sample  Label  Output     Prob    Pred\n");
@@ -325,7 +325,7 @@ int main(int argc, char *argv[]) {
     }
     printf("------------------------------------------------------------\n\n");
     
-    // 清理
+    // Cleanup
     free(outputs);
     free_test_data(&data);
     inference_buffer_free(&buf);
