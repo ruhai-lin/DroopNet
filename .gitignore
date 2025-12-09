@@ -1,0 +1,16 @@
+.venv
+
+
+# generated datasets
+pdn_dataset_uint8.npz
+pdn_dataset_uint8.bin
+
+
+# outputs
+TCN/outputs/
+GRU/outputs/
+
+
+# PyCache
+TCN/PythonModel/__pycache__/
+GRU/PythonModel/__pycache__/
