@@ -258,8 +258,8 @@ def main():
         pos_indices = np.where(y_numpy == 1)[0]
         neg_indices = np.where(y_numpy == 0)[0]
         
-        N_POS = 50
-        N_NEG = 50
+        N_POS = 5000
+        N_NEG = 5000
         
         # Guard against insufficient samples
         real_n_pos = min(len(pos_indices), N_POS)

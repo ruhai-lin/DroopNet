@@ -17,7 +17,7 @@ from model import TinyTCNInt8
 # ==========================================
 DATA_PATH = "../../pdn_dataset_uint8.npz"
 BATCH_SIZE = 2048
-EPOCHS = 5
+EPOCHS = 20
 LEARNING_RATE = 2e-3
 VAL_SPLIT = 0.2
 NUM_WORKERS = 4

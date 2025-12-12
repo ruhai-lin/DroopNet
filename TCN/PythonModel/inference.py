@@ -1,11 +1,12 @@
 """
 TinyTCN INT8 inference script (PTQ version)
 
-Supports two inference paths:
-1. Use the PyTorch quantized model (.pth)
-2. Use exported binary weights (.bin) for manual INT8 inference
+Supports three inference paths:
+1. Use the PyTorch float model (.pth) - full precision baseline
+2. Use the PyTorch quantized model (.pth) - INT8 quantized
+3. Use exported binary weights (.bin) for manual INT8 inference
 
-Use this to verify both paths produce consistent results.
+Use this to verify quantization accuracy and consistency between paths.
 """
 
 import struct
@@ -13,6 +14,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.ao.quantization as tq
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from model import TinyTCNInt8
 
 # ==========================================
@@ -20,6 +22,7 @@ from model import TinyTCNInt8
 # ==========================================
 BIN_PATH = "../outputs/tiny_tcn_int8.bin"
 PTH_PATH = "../outputs/tiny_tcn_int8.pth"
+FLT_PATH = "../outputs/tiny_tcn_float.pth"
 DATA_PATH = "../../pdn_dataset_uint8.npz"
 
 # Model structure parameters (must match model.py)
@@ -445,6 +448,15 @@ class BinaryInference:
 #           PyTorch .pth inference
 # ==========================================
 
+def load_float_model(filepath: str) -> nn.Module:
+    """Load the PyTorch float (full precision) model"""
+    model = TinyTCNInt8()
+    state_dict = torch.load(filepath, map_location='cpu', weights_only=False)
+    model.load_state_dict(state_dict)
+    model.eval()
+    return model
+
+
 def load_pth_model(filepath: str) -> nn.Module:
     """Load the PyTorch PTQ quantized model"""
     model = TinyTCNInt8()
@@ -475,7 +487,7 @@ def pth_inference(model: nn.Module, x: np.ndarray) -> np.ndarray:
 
 def main():
     print("=" * 60)
-    print("TinyTCN INT8 inference comparison test (PTQ version)")
+    print("TinyTCN inference comparison test (Float vs INT8)")
     print("=" * 60)
     
     # 1. Load test data
@@ -485,15 +497,33 @@ def main():
     y = data['y']
     
     # Select a subset for testing
-    N_TEST = 100
-    X_test = X[:N_TEST].astype(np.float32) / 255.0  # normalize to [0, 1]
-    y_test = y[:N_TEST]
+    N_TEST = 10000
+    
+    # Shuffle indices to ensure we get both positive and negative samples
+    # The dataset might be sorted by time or label, causing the first N samples to be all 0 or all 1.
+    indices = np.arange(len(y))
+    np.random.seed(42)  # For reproducibility
+    np.random.shuffle(indices)
+    test_indices = indices[:N_TEST]
+    
+    X_test = X[test_indices].astype(np.float32) / 255.0  # normalize to [0, 1]
+    y_test = y[test_indices]
     
     print(f"   Test samples: {N_TEST}")
+    print(f"   Positive samples in test set: {int(np.sum(y_test))}")
     print(f"   Input shape: {X_test.shape}")  # (N, 50, 9)
     
-    # 2. Load PyTorch quantized model (.pth)
-    print("\n[2] Loading PyTorch quantized model (.pth)...")
+    # 2. Load PyTorch float model (.pth)
+    print("\n[2] Loading PyTorch float model (.pth)...")
+    try:
+        float_model = load_float_model(FLT_PATH)
+        print("   Loaded successfully!")
+    except Exception as e:
+        print(f"   Failed to load: {e}")
+        float_model = None
+    
+    # 3. Load PyTorch quantized model (.pth)
+    print("\n[3] Loading PyTorch quantized model (.pth)...")
     try:
         pth_model = load_pth_model(PTH_PATH)
         print("   Loaded successfully!")
@@ -501,8 +531,8 @@ def main():
         print(f"   Failed to load: {e}")
         pth_model = None
     
-    # 3. Load binary weights (.bin)
-    print("\n[3] Loading binary weights (.bin)...")
+    # 4. Load binary weights (.bin)
+    print("\n[4] Loading binary weights (.bin)...")
     try:
         bin_weights = load_binary_weights(BIN_PATH)
         bin_inference = BinaryInference(bin_weights)
@@ -511,18 +541,43 @@ def main():
         print(f"   Failed to load: {e}")
         bin_inference = None
     
-    # 4. Run inference comparison
-    print("\n[4] Inference comparison...")
+    # 5. Run inference comparison
+    print("\n[5] Inference comparison...")
     print("-" * 60)
     
+    if float_model is not None:
+        print("\n>>> PyTorch Float (.pth) inference:")
+        float_outputs = pth_inference(float_model, X_test)
+        float_probs = 1 / (1 + np.exp(-float_outputs))  # Sigmoid
+        float_preds = (float_probs > 0.5).astype(np.float32).flatten()
+        
+        float_acc = accuracy_score(y_test, float_preds)
+        float_prec = precision_score(y_test, float_preds, zero_division=0)
+        float_rec = recall_score(y_test, float_preds, zero_division=0)
+        float_f1 = f1_score(y_test, float_preds, zero_division=0)
+        
+        print(f"    Accuracy: {float_acc:.4f}")
+        print(f"    Precision: {float_prec:.4f}")
+        print(f"    Recall: {float_rec:.4f}")
+        print(f"    F1 Score: {float_f1:.4f}")
+        print(f"    Output range: [{float_outputs.min():.4f}, {float_outputs.max():.4f}]")
+        print(f"    Output mean: {float_outputs.mean():.4f}")
+    
     if pth_model is not None:
-        print("\n>>> PyTorch (.pth) inference:")
+        print("\n>>> PyTorch INT8 (.pth) inference:")
         pth_outputs = pth_inference(pth_model, X_test)
         pth_probs = 1 / (1 + np.exp(-pth_outputs))  # Sigmoid
         pth_preds = (pth_probs > 0.5).astype(np.float32).flatten()
         
-        pth_acc = (pth_preds == y_test).mean()
+        pth_acc = accuracy_score(y_test, pth_preds)
+        pth_prec = precision_score(y_test, pth_preds, zero_division=0)
+        pth_rec = recall_score(y_test, pth_preds, zero_division=0)
+        pth_f1 = f1_score(y_test, pth_preds, zero_division=0)
+        
         print(f"    Accuracy: {pth_acc:.4f}")
+        print(f"    Precision: {pth_prec:.4f}")
+        print(f"    Recall: {pth_rec:.4f}")
+        print(f"    F1 Score: {pth_f1:.4f}")
         print(f"    Output range: [{pth_outputs.min():.4f}, {pth_outputs.max():.4f}]")
         print(f"    Output mean: {pth_outputs.mean():.4f}")
     
@@ -532,55 +587,173 @@ def main():
         bin_probs = 1 / (1 + np.exp(-bin_outputs))  # Sigmoid
         bin_preds = (bin_probs > 0.5).astype(np.float32).flatten()
         
-        bin_acc = (bin_preds == y_test).mean()
+        bin_acc = accuracy_score(y_test, bin_preds)
+        bin_prec = precision_score(y_test, bin_preds, zero_division=0)
+        bin_rec = recall_score(y_test, bin_preds, zero_division=0)
+        bin_f1 = f1_score(y_test, bin_preds, zero_division=0)
+        
         print(f"    Accuracy: {bin_acc:.4f}")
+        print(f"    Precision: {bin_prec:.4f}")
+        print(f"    Recall: {bin_rec:.4f}")
+        print(f"    F1 Score: {bin_f1:.4f}")
         print(f"    Output range: [{bin_outputs.min():.4f}, {bin_outputs.max():.4f}]")
         print(f"    Output mean: {bin_outputs.mean():.4f}")
     
-    # 5. Compare the two inference paths
-    if pth_model is not None and bin_inference is not None:
-        print("\n[5] Comparison of the two inference paths:")
+    # 6. Compare Float vs INT8 (PTQ)
+    if float_model is not None and pth_model is not None:
+        print("\n[6] Float vs INT8 (PTQ) comparison:")
         print("-" * 60)
         
+        # Metrics comparison
+        print(f"    Metrics comparison:")
+        print(f"      - Accuracy:  {float_acc:.4f} -> {pth_acc:.4f} (Δ: {pth_acc - float_acc:+.4f})")
+        print(f"      - Precision: {float_prec:.4f} -> {pth_prec:.4f} (Δ: {pth_prec - float_prec:+.4f})")
+        print(f"      - Recall:    {float_rec:.4f} -> {pth_rec:.4f} (Δ: {pth_rec - float_rec:+.4f})")
+        print(f"      - F1 Score:  {float_f1:.4f} -> {pth_f1:.4f} (Δ: {pth_f1 - float_f1:+.4f})")
+        
         # Output differences
-        output_diff = np.abs(pth_outputs.flatten() - bin_outputs.flatten())
-        print(f"    Output absolute difference:")
-        print(f"      - Max: {output_diff.max():.6f}")
-        print(f"      - Mean: {output_diff.mean():.6f}")
-        print(f"      - Median: {np.median(output_diff):.6f}")
+        output_diff_float_int8 = np.abs(float_outputs.flatten() - pth_outputs.flatten())
+        print(f"\n    Output absolute difference:")
+        print(f"      - Max: {output_diff_float_int8.max():.6f}")
+        print(f"      - Mean: {output_diff_float_int8.mean():.6f}")
+        print(f"      - Median: {np.median(output_diff_float_int8):.6f}")
         
         # Prediction agreement
-        pred_match = (pth_preds == bin_preds).mean()
-        print(f"\n    Prediction agreement: {pred_match:.4f} ({int(pred_match * N_TEST)}/{N_TEST})")
+        pred_match_float_int8 = (float_preds == pth_preds).mean()
+        print(f"\n    Prediction agreement: {pred_match_float_int8:.4f} ({int(pred_match_float_int8 * N_TEST)}/{N_TEST})")
         
         # Accuracy delta
-        acc_diff = abs(pth_acc - bin_acc)
-        print(f"    Accuracy delta: {acc_diff:.4f}")
+        acc_diff_float_int8 = abs(float_acc - pth_acc)
+        print(f"    Accuracy delta: {acc_diff_float_int8:.4f}")
         
         # Correlation coefficient
-        correlation = np.corrcoef(pth_outputs.flatten(), bin_outputs.flatten())[0, 1]
-        print(f"    Output correlation: {correlation:.6f}")
+        correlation_float_int8 = np.corrcoef(float_outputs.flatten(), pth_outputs.flatten())[0, 1]
+        print(f"    Output correlation: {correlation_float_int8:.6f}")
+    
+    # 7. Compare INT8 PTQ vs Binary
+    if pth_model is not None and bin_inference is not None:
+        print("\n[7] INT8 PTQ vs Binary comparison:")
+        print("-" * 60)
+        
+        # Metrics comparison
+        print(f"    Metrics comparison:")
+        print(f"      - Accuracy:  {pth_acc:.4f} -> {bin_acc:.4f} (Δ: {bin_acc - pth_acc:+.4f})")
+        print(f"      - Precision: {pth_prec:.4f} -> {bin_prec:.4f} (Δ: {bin_prec - pth_prec:+.4f})")
+        print(f"      - Recall:    {pth_rec:.4f} -> {bin_rec:.4f} (Δ: {bin_rec - pth_rec:+.4f})")
+        print(f"      - F1 Score:  {pth_f1:.4f} -> {bin_f1:.4f} (Δ: {bin_f1 - pth_f1:+.4f})")
+        
+        # Output differences
+        output_diff_int8_bin = np.abs(pth_outputs.flatten() - bin_outputs.flatten())
+        print(f"\n    Output absolute difference:")
+        print(f"      - Max: {output_diff_int8_bin.max():.6f}")
+        print(f"      - Mean: {output_diff_int8_bin.mean():.6f}")
+        print(f"      - Median: {np.median(output_diff_int8_bin):.6f}")
+        
+        # Prediction agreement
+        pred_match_int8_bin = (pth_preds == bin_preds).mean()
+        print(f"\n    Prediction agreement: {pred_match_int8_bin:.4f} ({int(pred_match_int8_bin * N_TEST)}/{N_TEST})")
+        
+        # Accuracy delta
+        acc_diff_int8_bin = abs(pth_acc - bin_acc)
+        print(f"    Accuracy delta: {acc_diff_int8_bin:.4f}")
+        
+        # Correlation coefficient
+        correlation_int8_bin = np.corrcoef(pth_outputs.flatten(), bin_outputs.flatten())[0, 1]
+        print(f"    Output correlation: {correlation_int8_bin:.6f}")
         
         # Judge whether the difference is acceptable
         print("\n" + "=" * 60)
-        if output_diff.max() < 0.5 and pred_match > 0.95:
-            print("✓ Conclusion: Results are highly consistent; .bin file is good to use.")
-        elif output_diff.max() < 1.0 and pred_match > 0.9:
-            print("△ Conclusion: Minor differences; likely due to quantization precision loss.")
+        if output_diff_int8_bin.max() < 0.5 and pred_match_int8_bin > 0.95:
+            print("✓ Conclusion: INT8 PTQ and Binary results are highly consistent; .bin file is good to use.")
+        elif output_diff_int8_bin.max() < 1.0 and pred_match_int8_bin > 0.9:
+            print("△ Conclusion: Minor differences between INT8 PTQ and Binary; likely due to quantization precision loss.")
         else:
-            print("✗ Conclusion: Large differences; please check the weight export/load logic.")
+            print("✗ Conclusion: Large differences between INT8 PTQ and Binary; please check the weight export/load logic.")
     
-    # 6. Detailed per-sample comparison
-    print("\n[6] Detailed per-sample comparison (first 5 samples):")
+    # 8. Compare Float vs Binary
+    if float_model is not None and bin_inference is not None:
+        print("\n[8] Float vs Binary comparison:")
+        print("-" * 60)
+        
+        # Metrics comparison
+        print(f"    Metrics comparison:")
+        print(f"      - Accuracy:  {float_acc:.4f} -> {bin_acc:.4f} (Δ: {bin_acc - float_acc:+.4f})")
+        print(f"      - Precision: {float_prec:.4f} -> {bin_prec:.4f} (Δ: {bin_prec - float_prec:+.4f})")
+        print(f"      - Recall:    {float_rec:.4f} -> {bin_rec:.4f} (Δ: {bin_rec - float_rec:+.4f})")
+        print(f"      - F1 Score:  {float_f1:.4f} -> {bin_f1:.4f} (Δ: {bin_f1 - float_f1:+.4f})")
+        
+        # Output differences
+        output_diff_float_bin = np.abs(float_outputs.flatten() - bin_outputs.flatten())
+        print(f"\n    Output absolute difference:")
+        print(f"      - Max: {output_diff_float_bin.max():.6f}")
+        print(f"      - Mean: {output_diff_float_bin.mean():.6f}")
+        print(f"      - Median: {np.median(output_diff_float_bin):.6f}")
+        
+        # Prediction agreement
+        pred_match_float_bin = (float_preds == bin_preds).mean()
+        print(f"\n    Prediction agreement: {pred_match_float_bin:.4f} ({int(pred_match_float_bin * N_TEST)}/{N_TEST})")
+        
+        # Accuracy delta
+        acc_diff_float_bin = abs(float_acc - bin_acc)
+        print(f"    Accuracy delta: {acc_diff_float_bin:.4f}")
+        
+        # Correlation coefficient
+        correlation_float_bin = np.corrcoef(float_outputs.flatten(), bin_outputs.flatten())[0, 1]
+        print(f"    Output correlation: {correlation_float_bin:.6f}")
+    
+    # 9. Summary table
+    print("\n[9] Summary table - Metrics:")
+    print("-" * 90)
+    print(f"{'Model':<20} {'Accuracy':<10} {'Precision':<10} {'Recall':<10} {'F1 Score':<10}")
+    print("-" * 90)
+    if float_model is not None:
+        print(f"{'Float (baseline)':<20} {float_acc:<10.4f} {float_prec:<10.4f} {float_rec:<10.4f} {float_f1:<10.4f}")
+    if pth_model is not None:
+        print(f"{'INT8 PTQ (.pth)':<20} {pth_acc:<10.4f} {pth_prec:<10.4f} {pth_rec:<10.4f} {pth_f1:<10.4f}")
+    if bin_inference is not None:
+        print(f"{'INT8 Binary (.bin)':<20} {bin_acc:<10.4f} {bin_prec:<10.4f} {bin_rec:<10.4f} {bin_f1:<10.4f}")
+    
+    # 9b. Comparison with Float baseline
+    if float_model is not None:
+        print("\n[9b] Comparison with Float baseline:")
+        print("-" * 90)
+        print(f"{'Model':<20} {'Acc Δ':<10} {'Prec Δ':<10} {'Rec Δ':<10} {'F1 Δ':<10} {'Pred Match':<12}")
+        print("-" * 90)
+        if pth_model is not None:
+            acc_delta = pth_acc - float_acc
+            prec_delta = pth_prec - float_prec
+            rec_delta = pth_rec - float_rec
+            f1_delta = pth_f1 - float_f1
+            print(f"{'INT8 PTQ (.pth)':<20} {acc_delta:<10.4f} {prec_delta:<10.4f} {rec_delta:<10.4f} {f1_delta:<10.4f} {pred_match_float_int8:<12.4f}")
+        if bin_inference is not None:
+            acc_delta = bin_acc - float_acc
+            prec_delta = bin_prec - float_prec
+            rec_delta = bin_rec - float_rec
+            f1_delta = bin_f1 - float_f1
+            print(f"{'INT8 Binary (.bin)':<20} {acc_delta:<10.4f} {prec_delta:<10.4f} {rec_delta:<10.4f} {f1_delta:<10.4f} {pred_match_float_bin:<12.4f}")
+    
+    # 10. Detailed per-sample comparison
+    print("\n[10] Detailed per-sample comparison (first 5 samples):")
     print("-" * 60)
-    print(f"{'Sample':<8} {'Label':<8} {'PTH Output':<15} {'BIN Output':<15} {'Diff':<10}")
+    header = f"{'Sample':<8} {'Label':<8}"
+    if float_model is not None:
+        header += f" {'Float':<15}"
+    if pth_model is not None:
+        header += f" {'INT8 PTQ':<15}"
+    if bin_inference is not None:
+        header += f" {'Binary':<15}"
+    print(header)
     print("-" * 60)
     
     for i in range(min(5, N_TEST)):
-        pth_out = pth_outputs[i, 0] if pth_model else float('nan')
-        bin_out = bin_outputs[i, 0] if bin_inference else float('nan')
-        diff = abs(pth_out - bin_out) if (pth_model and bin_inference) else float('nan')
-        print(f"{i:<8} {y_test[i]:<8.0f} {pth_out:<15.6f} {bin_out:<15.6f} {diff:<10.6f}")
+        row = f"{i:<8} {y_test[i]:<8.0f}"
+        if float_model is not None:
+            row += f" {float_outputs[i, 0]:<15.6f}"
+        if pth_model is not None:
+            row += f" {pth_outputs[i, 0]:<15.6f}"
+        if bin_inference is not None:
+            row += f" {bin_outputs[i, 0]:<15.6f}"
+        print(row)
     
     print("\n" + "=" * 60)
     print("Inference comparison complete!")

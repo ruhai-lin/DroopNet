@@ -4,7 +4,7 @@
 
 **DroopNet** is a neural network benchmark project dedicated to processing temporal data under extreme hardware resource constraints. Our core objective is to optimize the most suitable neural network architecture for **Power Delivery Network (PDN)** voltage droop prediction, specifically targeted for deployment on ASICs with **only 8KB of SRAM**.
 
-We selected **Temporal Convolutional Network (TCN)** as our primary architecture due to its superior parallelizability, deterministic memory access patterns, and excellent support in modern deep learning frameworks compared to RNNs (like GRU/LSTM). This project is inspired by **Proactive voltage droop mitigation techniques for high performance processors**, a concept detailed in the thesis by Jimmy Zhang (see [University of Illinois IDEALS](https://www.ideals.illinois.edu/items/126738)).
+We selected **Temporal Convolutional Network (TCN)** as our primary architecture due to its superior parallelizability, deterministic memory access patterns, and excellent support in modern deep learning frameworks compared to RNNs (like GRU). This project is inspired by **Proactive voltage droop mitigation techniques for high performance processors**, a concept detailed in the thesis by Jimmy Zhang (see [University of Illinois IDEALS](https://www.ideals.illinois.edu/items/126738)).
 
 The project focuses on finding the optimal balance between accuracy, latency, and area (PPA), providing an intelligent core for next-generation high-performance power management chips.
 
@@ -69,11 +69,11 @@ It is recommended to use a virtual environment:
 
 ```bash
 # Create virtual environment
-python -m venv venv
+python3 -m venv .venv
 
 # Activate it
 # On Linux/Mac:
-source venv/bin/activate
+source .venv/bin/activate
 # On Windows:
 # venv\Scripts\activate
 
@@ -86,7 +86,7 @@ pip install -r requirements.txt
 Run the physical emulator to generate training data and verification vectors:
 
 ```bash
-python pdn_emulator.py
+python3 pdn_emulator.py
 ```
 This will produce:
 - `pdn_dataset_uint8.npz`: For Python training.
@@ -98,7 +98,7 @@ Train the model and export quantized weights:
 
 ```bash
 cd TCN/PythonModel
-python train.py
+python3 train.py
 ```
 This saves the model weights to `../../outputs/tiny_tcn_int8.bin`.
 
